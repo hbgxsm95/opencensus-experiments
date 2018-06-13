@@ -19,9 +19,11 @@ package main
 import (
 	"context"
 	"contrib.go.opencensus.io/exporter/stackdriver"
-	"fmt"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
+	"gobot.io/x/gobot"
+	"gobot.io/x/gobot/drivers/gpio"
+	"gobot.io/x/gobot/platforms/raspi"
 	"log"
 	"time"
 )
@@ -31,18 +33,24 @@ const (
 	low  int = 0
 )
 
-/*
+// Create measures. The program will record measures for the voltage
+// level on the specific GPIO
+var (
+	gpioVoltage = stats.Int64("my.org/measure/gpio_voltage_level", "level of voltage", stats.UnitDimensionless)
+)
+
 func main() {
+	ctx := context.Background()
+	// TODO: It takes around one minute to detect the full edge of voltage change. Needs to tune the report period
+	initOpenCensus("opencensus-java-stats-demo-app", 1)
 	r := raspi.NewAdaptor()
 	myGPIO := gpio.NewDirectPinDriver(r, "11")
 	led := gpio.NewLedDriver(r, "7")
 	work := func() {
-		// TODO: Since the sample period is 1 seconds, the worst delay would be 1 sec
-		// Since this is a simple demo applciation, we could temporary ignore this part.
 		gobot.Every(1*time.Second, func() {
 			voltage, err := myGPIO.DigitalRead()
 			if err != nil {
-				log.Error("Error with Reading Voltage on the Raspberry Pi Pin 11")
+				log.Fatalf("Error with Reading Voltage on the Raspberry Pi Pin 11")
 			} else {
 				if voltage == high {
 					led.On()
@@ -50,6 +58,7 @@ func main() {
 					led.Off()
 				}
 			}
+			recordVoltage(ctx, int64(voltage))
 		})
 	}
 
@@ -58,18 +67,10 @@ func main() {
 		[]gobot.Device{myGPIO, led},
 		work,
 	)
-
 	robot.Start()
 }
-*/
 
-// Create measures. The program will record measures for the size of
-// processed videos and the nubmer of videos marked as spam.
-var videoSize = stats.Int64("my.org/measure/video_size", "size of processed videos", stats.UnitBytes)
-
-func main() {
-	ctx := context.Background()
-
+func initOpenCensus(projectId string, reportPeriod int) {
 	// Collected view data will be reported to Stackdriver Monitoring API
 	// via the Stackdriver exporter.
 	//
@@ -81,7 +82,7 @@ func main() {
 	// See https://developers.google.com/identity/protocols/application-default-credentials
 	// for more details.
 	exporter, err := stackdriver.NewExporter(stackdriver.Options{
-		ProjectID: "opencensus-java-stats-demo-app", // Google Cloud Console project ID.
+		ProjectID: projectId, // Google Cloud Console project ID.
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -89,29 +90,21 @@ func main() {
 	view.RegisterExporter(exporter)
 
 	// Set reporting period to report data at every second.
-	view.SetReportingPeriod(1 * time.Second)
+	view.SetReportingPeriod(time.Second * time.Duration(reportPeriod))
 
 	// Create view to see the processed video size cumulatively.
 	// Subscribe will allow view data to be exported.
 	// Once no longer need, you can unsubscribe from the view.
 	if err := view.Register(&view.View{
-		Name:        "my.org/views/video_size_cum",
-		Description: "processed video size over time",
-		Measure:     videoSize,
-		Aggregation: view.Distribution(0, 1<<16, 1<<32),
+		Name:        "my.org/views/gpio_voltage_instant",
+		Description: "voltage level on GPIO over time",
+		Measure:     gpioVoltage,
+		Aggregation: view.LastValue(),
 	}); err != nil {
 		log.Fatalf("Cannot subscribe to the view: %v", err)
 	}
-
-	processVideo(ctx)
-
-	// Wait for a duration longer than reporting duration to ensure the stats
-	// library reports the collected data.
-	fmt.Println("Wait longer than the reporting duration...")
-	time.Sleep(1 * time.Minute)
 }
 
-func processVideo(ctx context.Context) {
-	// Do some processing and record stats.
-	stats.Record(ctx, videoSize.M(25648))
+func recordVoltage(ctx context.Context, voltage int64) {
+	stats.Record(ctx, gpioVoltage.M(voltage))
 }
