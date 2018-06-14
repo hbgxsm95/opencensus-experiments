@@ -17,11 +17,21 @@
 package main
 
 import (
-	"github.com/mgutz/logxi/v1"
+	"fmt"
+	"github.com/d2r2/go-dht"
+	"github.com/d2r2/go-logger"
 	"gobot.io/x/gobot"
-	"gobot.io/x/gobot/drivers/gpio"
+	"gobot.io/x/gobot/drivers/aio"
+	"gobot.io/x/gobot/drivers/i2c"
 	"gobot.io/x/gobot/platforms/raspi"
+	"log"
+	"math"
 	"time"
+)
+
+var lg = logger.NewPackageLogger("main",
+	logger.DebugLevel,
+	// logger.InfoLevel,
 )
 
 const (
@@ -30,31 +40,71 @@ const (
 )
 
 func main() {
-	r := raspi.NewAdaptor()
-	myGPIO := gpio.NewDirectPinDriver(r, "11")
-	led := gpio.NewLedDriver(r, "7")
+	go readTemperature()
+	board := raspi.NewAdaptor()
+	ads1015 := i2c.NewADS1015Driver(board)
+	soundSensor := aio.NewGroveSoundSensorDriver(ads1015, "0")
+	lightSensor := aio.NewGroveLightSensorDriver(ads1015, "1")
+
 	work := func() {
-		// TODO: Since the sample period is 1 seconds, the worst delay would be 1 sec
-		// Since this is a simple demo applciation, we could temporary ignore this part.
 		gobot.Every(1*time.Second, func() {
-			voltage, err := myGPIO.DigitalRead()
-			if err != nil {
-				log.Error("Error with Reading Voltage on the Raspberry Pi Pin 11")
+			soundStrength, soundErr := readSound(soundSensor)
+			lightStrength, lightErr := lightSensor.Read()
+			if soundErr != nil || lightErr != nil {
+				log.Fatalf("Could not read value from sound / light sensors\n")
 			} else {
-				if voltage == high {
-					led.On()
-				} else {
-					led.Off()
-				}
+				fmt.Printf("Sound: %d, Light: %d\n", soundStrength, lightStrength)
 			}
 		})
 	}
 
 	robot := gobot.NewRobot("PinVoltageCollection",
-		[]gobot.Connection{r},
-		[]gobot.Device{myGPIO, led},
+		[]gobot.Connection{board},
+		[]gobot.Device{ads1015, soundSensor, lightSensor},
 		work,
 	)
 
 	robot.Start()
+
+}
+
+func readSound(sensor *aio.GroveSoundSensorDriver) (int, error) {
+	min := math.MaxInt32
+	max := math.MinInt32
+	for i := 0; i < 100; i++ {
+		strength, err := sensor.Read()
+		if err != nil {
+			log.Fatalf("Couldn't read data from the sensor\n")
+		} else {
+			if strength > max {
+				max = strength
+			}
+			if strength < min {
+				min = strength
+			}
+		}
+	}
+	return max - min, nil
+}
+func readTemperature() {
+	for range time.Tick(5 * time.Second) {
+		defer logger.FinalizeLogger()
+		// Uncomment/comment next line to suppress/increase verbosity of output
+		// logger.ChangePackageLogLevel("dht", logger.InfoLevel)
+
+		sensorType := dht.DHT11
+		// Read DHT11 sensor data from pin 4, retrying 10 times in case of failure.
+		// You may enable "boost GPIO performance" parameter, if your device is old
+		// as Raspberry PI 1 (this will require root privileges). You can switch off
+		// "boost GPIO performance" parameter for old devices, but it may increase
+		// retry attempts. Play with this parameter.
+		temperature, humidity, retried, err :=
+			dht.ReadDHTxxWithRetry(sensorType, 4, false, 10)
+		if err != nil {
+			lg.Fatal(err)
+		}
+		// print temperature and humidity
+		lg.Infof("Sensor = %v: Temperature = %v*C, Humidity = %v%% (retried %d times)",
+			sensorType, temperature, humidity, retried)
+	}
 }
