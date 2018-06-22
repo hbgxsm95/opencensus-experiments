@@ -18,15 +18,15 @@ package main
 
 import (
 	"fmt"
-	"github.com/d2r2/go-dht"
 	"github.com/d2r2/go-logger"
 	"gobot.io/x/gobot"
 	"gobot.io/x/gobot/drivers/aio"
 	"gobot.io/x/gobot/drivers/i2c"
 	"gobot.io/x/gobot/platforms/raspi"
 	"log"
-	"math"
 	"time"
+	"github.com/d2r2/go-dht"
+	"math"
 )
 
 var lg = logger.NewPackageLogger("main",
@@ -40,15 +40,15 @@ const (
 )
 
 func main() {
-	go readTemperature()
+	go readTemperature(4)
 	board := raspi.NewAdaptor()
 	ads1015 := i2c.NewADS1015Driver(board)
 	soundSensor := aio.NewGroveSoundSensorDriver(ads1015, "0")
 	lightSensor := aio.NewGroveLightSensorDriver(ads1015, "1")
 
 	work := func() {
-		gobot.Every(1*time.Second, func() {
-			soundStrength, soundErr := readSound(soundSensor)
+		gobot.Every(50 * time.Millisecond, func() {
+			soundStrength, soundErr := soundSensor.Read()
 			lightStrength, lightErr := lightSensor.Read()
 			if soundErr != nil || lightErr != nil {
 				log.Fatalf("Could not read value from sound / light sensors\n")
@@ -60,7 +60,7 @@ func main() {
 
 	robot := gobot.NewRobot("PinVoltageCollection",
 		[]gobot.Connection{board},
-		[]gobot.Device{ads1015, soundSensor, lightSensor},
+		[]gobot.Device{ads1015},
 		work,
 	)
 
@@ -86,7 +86,8 @@ func readSound(sensor *aio.GroveSoundSensorDriver) (int, error) {
 	}
 	return max - min, nil
 }
-func readTemperature() {
+
+func readTemperature(pin int) {
 	for range time.Tick(5 * time.Second) {
 		defer logger.FinalizeLogger()
 		// Uncomment/comment next line to suppress/increase verbosity of output
@@ -99,7 +100,7 @@ func readTemperature() {
 		// "boost GPIO performance" parameter for old devices, but it may increase
 		// retry attempts. Play with this parameter.
 		temperature, humidity, retried, err :=
-			dht.ReadDHTxxWithRetry(sensorType, 4, false, 10)
+			dht.ReadDHTxxWithRetry(sensorType, pin, false, 10)
 		if err != nil {
 			lg.Fatal(err)
 		}
